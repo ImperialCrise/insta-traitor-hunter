@@ -1,0 +1,33 @@
+.env
+.env.local
+
+# Session & cache (contains auth cookies + user data)
+data/
+*.session.json
+*.session
+sessions/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
