@@ -16,6 +16,11 @@ import logging
 import sys
 from pathlib import Path
 
+import json
+import time
+
+from instagrapi.exceptions import ChallengeRequired, ChallengeUnknownStep
+from requests.exceptions import JSONDecodeError as RequestsJSONDecodeError
 from rich.console import Console
 from rich.logging import RichHandler
 from rich.table import Table
@@ -210,6 +215,63 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+COOLDOWN_MINUTES = 30
+CHALLENGE_HELP = (
+    "\n[red]>>> Instagram is asking for a manual security check. <<<[/]\n\n"
+    "[bold]Your account is currently flagged by IG. Retrying now will make "
+    "it WORSE.[/]\n\n"
+    "[yellow]Do all of these, in order:[/]\n"
+    "  1. On your [bold]phone[/]: open IG app, approve any 'unusual login' "
+    "notification, browse the feed 2-3 min.\n"
+    "  2. On [bold]Chrome/Firefox on this Windows PC[/]: go to "
+    "https://www.instagram.com, log in, solve the captcha / email code if "
+    "asked, scroll your feed, like a post, check Settings > Security > "
+    "Login Activity and approve all sessions.\n"
+    "  3. [bold red]WAIT at least 2-4 hours[/] (ideally 24h) without touching "
+    "this script.\n"
+    "  4. Best trick: connect your PC to your [bold]phone's 4G hotspot[/], so "
+    "the script sees IG from the same IP as your phone. Dramatically reduces "
+    "challenges.\n"
+    "  5. Then retry: [cyan]python main.py stats[/]\n"
+)
+
+
+def _cooldown_path(cfg: Config) -> "Path":
+    return cfg.cache_dir / "last_challenge.json"
+
+
+def _check_cooldown(cfg: Config) -> None:
+    path = _cooldown_path(cfg)
+    if not path.exists():
+        return
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        last = int(data.get("ts", 0))
+    except (json.JSONDecodeError, OSError, ValueError):
+        return
+    remaining = (last + COOLDOWN_MINUTES * 60) - int(time.time())
+    if remaining <= 0:
+        return
+    mins = remaining // 60 + 1
+    console.print(
+        f"\n[yellow]Cooldown active:[/] the previous run was blocked by a "
+        f"challenge.\nWait [bold]{mins} more minute(s)[/] before retrying, "
+        f"or delete [cyan]{path}[/] to override.\n"
+    )
+    raise SystemExit(4)
+
+
+def _mark_cooldown(cfg: Config) -> None:
+    path = _cooldown_path(cfg)
+    try:
+        path.write_text(
+            json.dumps({"ts": int(time.time())}, indent=2),
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -220,6 +282,8 @@ def main(argv: list[str] | None = None) -> int:
     except RuntimeError as exc:
         console.print(f"[red]Config error:[/] {exc}")
         return 2
+
+    _check_cooldown(cfg)
 
     dispatch = {
         "stats": cmd_stats,
@@ -235,6 +299,16 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         console.print("\n[yellow]Interrupted.[/]")
         return 130
+    except (ChallengeRequired, ChallengeUnknownStep, RequestsJSONDecodeError):
+        _mark_cooldown(cfg)
+        console.print(CHALLENGE_HELP)
+        return 3
+    except RuntimeError as exc:
+        if "challenge" in str(exc).lower():
+            _mark_cooldown(cfg)
+            console.print(CHALLENGE_HELP)
+            return 3
+        raise
     return 0
 
 

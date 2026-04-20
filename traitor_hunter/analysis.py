@@ -9,11 +9,20 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from instagrapi import Client
+from instagrapi.exceptions import ChallengeRequired, ChallengeUnknownStep
 from instagrapi.types import UserShort
 
 from .config import Config
 
 log = logging.getLogger(__name__)
+
+
+def _challenge_hint() -> str:
+    return (
+        "Instagram blocked the request with a security challenge. "
+        "Open the IG app on your phone, approve the login, log in once "
+        "via https://www.instagram.com from this computer, then retry."
+    )
 
 
 @dataclass
@@ -83,15 +92,19 @@ def fetch_snapshot(api: Client, cfg: Config, use_cache: bool = True) -> Snapshot
             following={k: Account(**v) for k, v in raw["following"].items()},
         )
 
-    me = api.user_id_from_username(cfg.username)
+    try:
+        me = api.user_id_from_username(cfg.username)
 
-    log.info("Fetching followers (this can take a while)...")
-    followers_raw = api.user_followers(me, amount=0)
-    log.info("Fetched %d followers.", len(followers_raw))
+        log.info("Fetching followers (this can take a while)...")
+        followers_raw = api.user_followers(me, amount=0)
+        log.info("Fetched %d followers.", len(followers_raw))
 
-    log.info("Fetching followings...")
-    following_raw = api.user_following(me, amount=0)
-    log.info("Fetched %d followings.", len(following_raw))
+        log.info("Fetching followings...")
+        following_raw = api.user_following(me, amount=0)
+        log.info("Fetched %d followings.", len(following_raw))
+    except (ChallengeRequired, ChallengeUnknownStep) as exc:
+        log.error(_challenge_hint())
+        raise RuntimeError(_challenge_hint()) from exc
 
     followers = {u.username.lower(): _short_to_account(u) for u in followers_raw.values()}
     following = {u.username.lower(): _short_to_account(u) for u in following_raw.values()}
